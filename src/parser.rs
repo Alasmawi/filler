@@ -64,12 +64,20 @@ pub fn parse_board_with_player(lines: &[String], player: Player) -> Result<Board
     let (width, height) = parse_dimensions(header, "Anfield")?;
     let mut rows = Vec::with_capacity(height);
 
-    for line in lines.iter().skip(1) {
-        if let Some(row) = parse_board_row(line, width)? {
+    for (expected_row, line) in lines.iter().skip(1).enumerate() {
+        if let Some((row_number, row)) = parse_board_row(line, width)? {
+            if row_number != rows.len() {
+                return Err(ParseError::new(format!(
+                    "board row index mismatch: expected {}, got {row_number}",
+                    rows.len()
+                )));
+            }
             rows.push(row);
             if rows.len() == height {
                 break;
             }
+        } else if expected_row >= height {
+            break;
         }
     }
 
@@ -98,6 +106,9 @@ pub fn parse_piece(lines: &[String]) -> Result<Piece, ParseError> {
                 row.len()
             )));
         }
+        if row.iter().any(|cell| !matches!(cell, '.' | 'O' | '#')) {
+            return Err(ParseError::new(format!("invalid piece row: {line}")));
+        }
         rows.push(row);
     }
 
@@ -121,8 +132,9 @@ pub fn read_player<R: BufRead>(reader: &mut R) -> Result<Option<Player>, ParseEr
 }
 
 pub fn read_turn<R: BufRead>(reader: &mut R, player: Player) -> Result<Option<Turn>, ParseError> {
-    let Some(board_header) = read_until_header(reader, "Anfield")? else {
-        return Ok(None);
+    let board_header = match read_until_header(reader, "Anfield")? {
+        Some(header) => header,
+        None => return Ok(None),
     };
 
     let (_, board_height) = parse_dimensions(&board_header, "Anfield")?;
@@ -137,7 +149,7 @@ pub fn read_turn<R: BufRead>(reader: &mut R, player: Player) -> Result<Option<Tu
             return Err(ParseError::new("unexpected EOF while reading board"));
         }
 
-        let owned = line.trim_end_matches(['\r', '\n']).to_string();
+        let owned = strip_line_end(&line).to_string();
         if parse_board_row(&owned, parse_dimensions(&board_lines[0], "Anfield")?.0)?.is_some() {
             parsed_board_rows += 1;
         }
@@ -145,8 +157,9 @@ pub fn read_turn<R: BufRead>(reader: &mut R, player: Player) -> Result<Option<Tu
     }
 
     let board = parse_board_with_player(&board_lines, player)?;
-    let Some(piece_header) = read_until_header(reader, "Piece")? else {
-        return Err(ParseError::new("missing piece header"));
+    let piece_header = match read_until_header(reader, "Piece")? {
+        Some(header) => header,
+        None => return Err(ParseError::new("missing piece header")),
     };
 
     let (_, piece_height) = parse_dimensions(&piece_header, "Piece")?;
@@ -158,7 +171,7 @@ pub fn read_turn<R: BufRead>(reader: &mut R, player: Player) -> Result<Option<Tu
         if reader.read_line(&mut line)? == 0 {
             return Err(ParseError::new("unexpected EOF while reading piece"));
         }
-        piece_lines.push(line.trim_end_matches(['\r', '\n']).to_string());
+        piece_lines.push(strip_line_end(&line).to_string());
     }
 
     let piece = parse_piece(&piece_lines)?;
@@ -179,15 +192,16 @@ fn read_until_header<R: BufRead>(
             return Ok(None);
         }
 
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if trimmed.starts_with(expected_label) {
+        let trimmed = strip_line_end(&line);
+        if header_label_matches(trimmed, expected_label) {
+            parse_dimensions(trimmed, expected_label)?;
             return Ok(Some(trimmed.to_string()));
         }
     }
 }
 
 fn parse_dimensions(line: &str, expected_label: &str) -> Result<(usize, usize), ParseError> {
-    if !line.starts_with(expected_label) {
+    if !header_label_matches(line, expected_label) {
         return Err(ParseError::new(format!(
             "expected {expected_label} header, got: {line}"
         )));
@@ -200,24 +214,36 @@ fn parse_dimensions(line: &str, expected_label: &str) -> Result<(usize, usize), 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| ParseError::new(format!("invalid dimension: {err}")))?;
 
-    if numbers.len() < 2 {
+    if numbers.len() != 2 {
         return Err(ParseError::new(format!(
             "expected two dimensions in header: {line}"
         )));
     }
 
+    numbers[0]
+        .checked_mul(numbers[1])
+        .ok_or_else(|| ParseError::new(format!("dimensions are too large: {line}")))?;
+
     Ok((numbers[0], numbers[1]))
 }
 
-fn parse_board_row(line: &str, width: usize) -> Result<Option<Vec<char>>, ParseError> {
+fn header_label_matches(line: &str, expected_label: &str) -> bool {
+    line.split_whitespace().next() == Some(expected_label)
+}
+
+fn parse_board_row(line: &str, width: usize) -> Result<Option<(usize, Vec<char>)>, ParseError> {
     let trimmed = line.trim_start();
-    let Some((row_number, cells)) = trimmed.split_once(char::is_whitespace) else {
-        return Ok(None);
+    let (row_number, cells) = match trimmed.split_once(char::is_whitespace) {
+        Some(parts) => parts,
+        None => return Ok(None),
     };
 
     if !row_number.chars().all(|ch| ch.is_ascii_digit()) {
         return Ok(None);
     }
+    let row_number = row_number
+        .parse::<usize>()
+        .map_err(|err| ParseError::new(format!("invalid board row index: {err}")))?;
 
     let row = cells.trim().chars().collect::<Vec<char>>();
     if row.len() != width {
@@ -234,7 +260,11 @@ fn parse_board_row(line: &str, width: usize) -> Result<Option<Vec<char>>, ParseE
         return Err(ParseError::new(format!("invalid board row: {line}")));
     }
 
-    Ok(Some(row))
+    Ok(Some((row_number, row)))
+}
+
+fn strip_line_end(line: &str) -> &str {
+    line.trim_end_matches('\n').trim_end_matches('\r')
 }
 
 #[cfg(test)]

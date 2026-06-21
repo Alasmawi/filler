@@ -83,12 +83,12 @@ impl Board {
 
     pub fn is_enemy(&self, x: usize, y: usize) -> bool {
         self.cell(x, y)
-            .is_some_and(|cell| self.player.is_enemy_char(cell))
+            .map_or(false, |cell| self.player.is_enemy_char(cell))
     }
 
     pub fn is_own(&self, x: usize, y: usize) -> bool {
         self.cell(x, y)
-            .is_some_and(|cell| self.player.is_own_char(cell))
+            .map_or(false, |cell| self.player.is_own_char(cell))
     }
 
     pub fn occupied_count(&self) -> usize {

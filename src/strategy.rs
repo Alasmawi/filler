@@ -1,5 +1,5 @@
 use crate::heatmap::HeatMap;
-use crate::placement::{is_valid, Placement};
+use crate::placement::{valid_placements, Placement};
 use crate::{Board, Piece};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,21 +22,14 @@ pub fn best_move(board: &Board, piece: &Piece) -> Option<Placement> {
     let phase = game_phase(board);
     let mut best: Option<(Placement, i64)> = None;
 
-    for y in 0..=board.height - piece.height {
-        for x in 0..=board.width - piece.width {
-            let placement = Placement::new(x as isize, y as isize);
-            if !is_valid(board, piece, placement.x, placement.y) {
-                continue;
-            }
+    for placement in valid_placements(board, piece) {
+        let score = evaluate(board, piece, &heatmap, placement, phase);
 
-            let score = evaluate(board, piece, &heatmap, placement, phase);
-
-            if best
-                .as_ref()
-                .is_none_or(|(_, best_score)| score < *best_score)
-            {
-                best = Some((placement, score));
-            }
+        if best
+            .as_ref()
+            .map_or(true, |(_, best_score)| score < *best_score)
+        {
+            best = Some((placement, score));
         }
     }
 

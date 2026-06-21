@@ -7,14 +7,16 @@ use filler::strategy::choose_move;
 fn main() {
     if let Err(err) = run() {
         eprintln!("filler: {err}");
+        std::process::exit(1);
     }
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
-    let Some(player) = read_player(&mut reader)? else {
-        return Ok(());
+    let player = match read_player(&mut reader)? {
+        Some(player) => player,
+        None => return Ok(()),
     };
 
     let stdout = io::stdout();
